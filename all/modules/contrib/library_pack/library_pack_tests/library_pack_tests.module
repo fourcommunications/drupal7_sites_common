@@ -1,0 +1,48 @@
+<?php
+
+@include 'tests/jquery.qtip2.inc';
+@include 'tests/jquery.jscrollpane.inc';
+@include 'tests/jquery.chosen.inc';
+@include 'tests/underscore.inc';
+@include 'tests/jquery.hammer.inc';
+@include 'tests/jquery.hoverintent.inc';
+@include 'tests/modernizr.inc';
+@include 'tests/jquery.select2.inc';
+@include 'tests/jquery.timeago.inc';
+@include 'tests/colorpicker.inc';
+@include 'tests/jquery.placeholder.inc';
+@include 'tests/jquery.appear.inc';
+
+function library_pack_tests_menu() {
+    $items['admin/config/system/library_test'] = array(
+      'title' => 'Javascript Library Test Suite',
+      'description' => 'Edit the specification',
+        'page callback' => 'drupal_get_form',
+         'page arguments' => array('library_pack_tests_test'),
+
+      'access arguments' => array('administer content'),
+      'type' => MENU_NORMAL_ITEM
+  );
+    return $items;
+  }
+
+  function library_pack_tests_test() {
+
+    $items = array();
+
+    $items['qtip2'] = _library_pack_tests_qtip2();
+    $items['jscrollpane'] = _library_pack_tests_jscrollpane();
+    $items['chosen'] = _library_pack_tests_chosen();
+    $items['underscore'] = _library_pack_tests_underscore();
+    $items['hammer'] = _library_pack_tests_hammer();
+    $items['hoverintent'] = _library_pack_tests_hoverintent();
+    $items['modernizr'] = _library_pack_tests_modernizr();
+    $items['select2'] = _library_pack_tests_select2();
+    $items['timeago'] = _library_pack_tests_timeago();
+    $items['colorpicker'] = _library_pack_tests_colorpicker();
+    $items['placeholder'] = _library_pack_tests_placeholder();
+    $items['appear'] = _library_pack_tests_appear();
+
+    return  $items;
+  }
+

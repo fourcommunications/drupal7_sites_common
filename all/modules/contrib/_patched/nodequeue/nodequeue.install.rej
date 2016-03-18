@@ -1,0 +1,30 @@
+***************
+*** 478,483 ****
+  }
+  
+  /**
+   * Helper function for populating a name field.
+   */
+  function nodequeue_update_populate_name_field($table, $queues) {
+--- 478,498 ----
+  }
+  
+  /**
++  * Change value of the reference in nodequeue_subqueue from a sequence number to machine_name of nodequeue.
++  */
++ function nodequeue_update_7301() {
++   // Get an list of subqueue where the the reference value equals the sqid.
++   $results = db_query("SELECT sqid, name FROM {nodequeue_subqueue} WHERE sqid = reference")
++               ->fetchAllKeyed(0,1);
++   foreach ($results as $sqid => $name) {
++     db_update('nodequeue_subqueue')
++       ->fields(array('reference' => $name))
++       ->condition('sqid',  $sqid)
++       ->execute();
++   }
++ }
++ 
++ /**
+   * Helper function for populating a name field.
+   */
+  function nodequeue_update_populate_name_field($table, $queues) {

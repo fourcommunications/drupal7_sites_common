@@ -1,0 +1,30 @@
+commit 82a0e5e28448b89037c777753fd385ea907ead59
+Author: Alex Harries <alex@greyhead.co.uk>
+Date:   Wed Dec 16 14:40:13 2015 +0000
+
+    Patched the commerce_order module in commerce_order_calculate_total($order) to use the product's actual price, instead of the base price.
+    
+    Signed-off-by: Alex Harries <alex@greyhead.co.uk>
+
+diff --git a/sites/all/modules/contrib/_patched/commerce/modules/order/commerce_order.module b/sites/all/modules/contrib/_patched/commerce/modules/order/commerce_order.module
+index e9584c1..78d559a 100644
+--- a/sites/all/modules/contrib/_patched/commerce/modules/order/commerce_order.module
++++ b/sites/all/modules/contrib/_patched/commerce/modules/order/commerce_order.module
+@@ -1378,13 +1378,13 @@ function commerce_order_calculate_total($order) {
+   $amount = 0;
+ 
+   foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
+-    // Convert the line item's total to the order's currency for totalling.
+-    $component_total = commerce_price_component_total($line_item_wrapper->commerce_total->value());
++    // Load the line item.
++    $line_item = commerce_line_item_load($line_item_wrapper->getIdentifier());
+ 
+     // Add the totals.
+     $amount += commerce_currency_convert(
+-      $component_total['amount'],
+-      $component_total['currency_code'],
++      $line_item->commerce_total[LANGUAGE_NONE][0]['amount'],
++      $line_item->commerce_total[LANGUAGE_NONE][0]['currency_code'],
+       $currency_code
+     );
+ 

@@ -1,0 +1,12 @@
+name = Library Pack Test Suite
+description = "Libraries Test Suite"
+core = 7.x
+dependencies[] = libraries
+dependencies[] = library_pack
+
+; Information added by Drupal.org packaging script on 2014-08-12
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "library_pack"
+datestamp = "1407858229"
+

@@ -1,0 +1,457 @@
+diff --git a/includes/commerce.controller.inc b/includes/commerce.controller.inc
+index 1cdd605..d181a50 100644
+--- a/includes/commerce.controller.inc
++++ b/includes/commerce.controller.inc
+@@ -7,7 +7,30 @@
+  * A full fork of Entity API's controller, with support for revisions.
+  */
+ 
+-class DrupalCommerceEntityController extends DrupalDefaultEntityController implements EntityAPIControllerInterface {
++interface DrupalCommerceEntityControllerInterface extends EntityAPIControllerInterface {
++
++  /**
++   * Determines whether the provided entity is locked.
++   *
++   * @param $entity
++   *   The entity to check.
++   *
++   * @return
++   *   True if the entity is locked, false otherwise.
++   */
++  public function isLocked($entity);
++
++  /**
++   * Indicate that pessimistic locking should be skipped in this request.
++   *
++   * @param $skip_locking
++   *   The boolean indicating whether locking should be skipped.
++   */
++  public function skipLocking();
++
++}
++
++class DrupalCommerceEntityController extends DrupalDefaultEntityController implements DrupalCommerceEntityControllerInterface {
+ 
+   /**
+    * Stores our transaction object, necessary for pessimistic locking to work.
+@@ -21,14 +44,157 @@ class DrupalCommerceEntityController extends DrupalDefaultEntityController imple
+   protected $lockedEntities = array();
+ 
+   /**
++   * Stores whether pessimistic locking should be skipped in this request.
++   */
++  protected $skipLocking = FALSE;
++
++  /**
++   * Implements DrupalCommerceEntityControllerInterface::isLocked().
++   */
++  public function isLocked($entity) {
++    return isset($this->lockedEntities[$entity->{$this->idKey}]);
++  }
++
++  /**
++   * Implements DrupalCommerceEntityControllerInterface::skipLocking().
++   */
++  public function skipLocking($skip_locking = TRUE) {
++    $this->skipLocking = $skip_locking;
++
++    return $this;
++  }
++
++  /**
++   * Determines whether the current entity type requires pessimistic locking.
++   *
++   * @return
++   *   True if locking is required, false otherwise.
++   */
++  protected function requiresLocking() {
++    $enabled = isset($this->entityInfo['locking mode']) && $this->entityInfo['locking mode'] == 'pessimistic';
++    $not_skipped = empty($this->skipLocking);
++
++    return $enabled && $not_skipped;
++  }
++
++  /**
++   * Checks the list of tracked locked entities, and if it's empty, commits
++   * the transaction in order to remove the acquired locks.
++   *
++   * The transaction is not necessarily committed immediately. Drupal will
++   * commit it as soon as possible given the state of the transaction stack.
++   */
++  protected function releaseLock() {
++    if ($this->requiresLocking() && empty($this->lockedEntities)) {
++      unset($this->controllerTransaction);
++    }
++  }
++
++  /**
++   * Overrides DrupalDefaultEntityController::load().
++   */
++  public function load($ids = array(), $conditions = array()) {
++    // Lock by default if the caller didn't indicate a preference.
++    $conditions += array('_lock' => TRUE);
++    // If locking has been required, then bypass the internal cache for any
++    // entities that are not already locked.
++    if (!empty($conditions['_lock']) && $this->requiresLocking()) {
++      foreach (array_diff($ids, $this->lockedEntities) as $id) {
++        unset($this->entityCache[$id]);
++      }
++    }
++
++    $entities = array();
++
++    // Revisions are not statically cached, and require a different query to
++    // other conditions, so separate the revision id into its own variable.
++    if ($this->revisionKey && isset($conditions[$this->revisionKey])) {
++      $revision_id = $conditions[$this->revisionKey];
++      unset($conditions[$this->revisionKey]);
++    }
++    else {
++      $revision_id = FALSE;
++    }
++
++    // Create a new variable which is either a prepared version of the $ids
++    // array for later comparison with the entity cache, or FALSE if no $ids
++    // were passed. The $ids array is reduced as items are loaded from cache,
++    // and we need to know if it's empty for this reason to avoid querying the
++    // database when all requested entities are loaded from cache.
++    $passed_ids = !empty($ids) ? array_flip($ids) : FALSE;
++    // Try to load entities from the static cache, if the entity type supports
++    // static caching.
++    if ($this->cache && !$revision_id) {
++      $entities += $this->cacheGet($ids, $conditions);
++      // If any entities were loaded, remove them from the ids still to load.
++      if ($passed_ids) {
++        $ids = array_keys(array_diff_key($passed_ids, $entities));
++      }
++    }
++
++    // Load any remaining entities from the database. This is the case if $ids
++    // is set to FALSE (so we load all entities), if there are any ids left to
++    // load, if loading a revision, or if $conditions was passed without $ids.
++    // Except if $conditions contains only _lock.
++    if ($ids === FALSE || $ids || $revision_id || (($conditions && !$passed_ids)
++        && !(count($conditions) == 1 && isset($conditions['_lock'])))) {
++      // Build the query.
++      $query = $this->buildQuery($ids, $conditions, $revision_id);
++      $queried_entities = $query
++        ->execute()
++        ->fetchAllAssoc($this->idKey);
++    }
++
++    // Pass all entities loaded from the database through $this->attachLoad(),
++    // which attaches fields (if supported by the entity type) and calls the
++    // entity type specific load callback, for example hook_node_load().
++    if (!empty($queried_entities)) {
++      $this->attachLoad($queried_entities, $revision_id);
++      $entities += $queried_entities;
++    }
++
++    if ($this->cache) {
++      // Add entities to the cache if we are not loading a revision.
++      if (!empty($queried_entities) && !$revision_id) {
++        $this->cacheSet($queried_entities);
++      }
++    }
++
++    // Ensure that the returned array is ordered the same as the original
++    // $ids array if this was passed in and remove any invalid ids.
++    if ($passed_ids) {
++      // Remove any invalid ids from the array.
++      $passed_ids = array_intersect_key($passed_ids, $entities);
++      foreach ($entities as $entity) {
++        $passed_ids[$entity->{$this->idKey}] = $entity;
++      }
++      $entities = $passed_ids;
++    }
++
++    return $entities;
++  }
++
++  /**
++   * Overrides DrupalDefaultEntityController::cacheGet().
++   */
++  protected function cacheGet($ids, $conditions = array()) {
++    unset($conditions['_lock']);
++
++    return parent::cacheGet($ids, $conditions);
++  }
++
++  /**
+    * Override of DrupalDefaultEntityController::buildQuery().
+    *
+    * Handle pessimistic locking.
+    */
+   protected function buildQuery($ids, $conditions = array(), $revision_id = FALSE) {
++    $lock = !empty($conditions['_lock']);
++    unset($conditions['_lock']);
++
+     $query = parent::buildQuery($ids, $conditions, $revision_id);
+ 
+-    if (isset($this->entityInfo['locking mode']) && $this->entityInfo['locking mode'] == 'pessimistic') {
++    if ($lock && $this->requiresLocking()) {
+       // In pessimistic locking mode, we issue the load query with a FOR UPDATE
+       // clause. This will block all other load queries to the loaded objects
+       // but requires us to start a transaction.
+@@ -69,21 +235,6 @@ class DrupalCommerceEntityController extends DrupalDefaultEntityController imple
+   }
+ 
+   /**
+-   * Checks the list of tracked locked entities, and if it's empty, commits
+-   * the transaction in order to remove the acquired locks.
+-   *
+-   * The transaction is not necessarily committed immediately. Drupal will
+-   * commit it as soon as possible given the state of the transaction stack.
+-   */
+-  protected function releaseLock() {
+-    if (isset($this->entityInfo['locking mode']) && $this->entityInfo['locking mode'] == 'pessimistic') {
+-      if (empty($this->lockedEntities)) {
+-        unset($this->controllerTransaction);
+-      }
+-    }
+-  }
+-
+-  /**
+    * (Internal use) Invokes a hook on behalf of the entity.
+    *
+    * For hooks that have a respective field API attacher like insert/update/..
+@@ -228,9 +379,9 @@ class DrupalCommerceEntityController extends DrupalDefaultEntityController imple
+       if (!empty($update_base_table)) {
+         // Go back to the base table and update the pointer to the revision ID.
+         db_update($this->entityInfo['base table'])
+-        ->fields(array($this->revisionKey => $entity->{$this->revisionKey}))
+-        ->condition($this->idKey, $entity->{$this->idKey})
+-        ->execute();
++          ->fields(array($this->revisionKey => $entity->{$this->revisionKey}))
++          ->condition($this->idKey, $entity->{$this->idKey})
++          ->execute();
+       }
+ 
+       // Update the static cache so that the next entity_load() will return this
+@@ -238,8 +389,10 @@ class DrupalCommerceEntityController extends DrupalDefaultEntityController imple
+       $this->entityCache[$entity->{$this->idKey}] = $entity;
+ 
+       // Maintain the list of locked entities and release the lock if possible.
+-      unset($this->lockedEntities[$entity->{$this->idKey}]);
+-      $this->releaseLock();
++      if ($this->requiresLocking()) {
++        unset($this->lockedEntities[$entity->{$this->idKey}]);
++        $this->releaseLock();
++      }
+ 
+       $this->invoke($op, $entity);
+ 
+diff --git a/modules/order/commerce_order.module b/modules/order/commerce_order.module
+index 786e013..e9584c1 100644
+--- a/modules/order/commerce_order.module
++++ b/modules/order/commerce_order.module
+@@ -746,17 +746,27 @@ function commerce_order_save($order) {
+ 
+ /**
+  * Loads an order by ID.
++ *
++ * @param $order_id
++ *   The order id.
++ * @param $lock
++ *   Whether to lock the loaded order.
+  */
+-function commerce_order_load($order_id) {
+-  $orders = commerce_order_load_multiple(array($order_id), array());
++function commerce_order_load($order_id, $lock = TRUE) {
++  $orders = commerce_order_load_multiple(array($order_id), array(), FALSE, $lock);
+   return $orders ? reset($orders) : FALSE;
+ }
+ 
+ /**
+  * Loads an order by number.
++ *
++ * @param $order_number
++ *   The order number.
++ * @param $lock
++ *   Whether to lock the loaded order.
+  */
+-function commerce_order_load_by_number($order_number) {
+-  $orders = commerce_order_load_multiple(array(), array('order_number' => $order_number));
++function commerce_order_load_by_number($order_number, $lock = TRUE) {
++  $orders = commerce_order_load_multiple(array(), array('order_number' => $order_number), FALSE, $lock);
+   return $orders ? reset($orders) : FALSE;
+ }
+ 
+@@ -774,14 +784,30 @@ function commerce_order_load_by_number($order_number) {
+  *   the $order_ids array assuming the revision_id is valid for the order_id.
+  * @param $reset
+  *   Whether to reset the internal order loading cache.
++ * @param $lock
++ *   Whether to lock the loaded order.
+  *
+  * @return
+  *   An array of order objects indexed by order_id.
+  */
+-function commerce_order_load_multiple($order_ids = array(), $conditions = array(), $reset = FALSE) {
++function commerce_order_load_multiple($order_ids = array(), $conditions = array(), $reset = FALSE, $lock = TRUE) {
++  $conditions['_lock'] = $lock;
+   return entity_load('commerce_order', $order_ids, $conditions, $reset);
+ }
+ 
++ /**
++  * Determines whether or not the given order object is locked.
++  *
++  * @param $order
++  *   A fully loaded order object.
++  *
++  * @return
++  *   Boolean indicating whether or not the order object is locked.
++  */
++function commerce_order_is_locked($order) {
++  return entity_get_controller('commerce_order')->isLocked($order);
++}
++
+ /**
+  * Determines whether or not the given order object represents the latest
+  * revision of the order.
+@@ -1472,6 +1498,34 @@ function commerce_order_entity_query_alter($query) {
+ }
+ 
+ /**
++ * Implements hook_views_pre_execute().
++ *
++ * Ensures that order views don't lock the loaded orders if not necessary.
++ */
++function commerce_order_views_pre_execute(&$view) {
++  if ($view->base_table != 'commerce_order') {
++    return;
++  }
++
++  $previous_result = &drupal_static(__FUNCTION__, NULL);
++  if ($previous_result === FALSE) {
++    // The previous order view needed locking, which means that locking can't
++    // be skipped in this request. No need to evaluate other views.
++    return;
++  }
++
++  // Locking can't be skipped if the view has form elements, except VBO.
++  // VBO modifies orders in a multi-step process, so locking is only needed
++  // after that process is initiated by the user submitting the VBO selection.
++  $has_form_elements = views_view_has_form_elements($view);
++  $has_vbo_field = isset($view->field['views_bulk_operations']);
++  $submitted = isset($_POST['operation']);
++  $skip_locking = (!$has_form_elements || ($has_vbo_field && !$submitted));
++  entity_get_controller('commerce_order')->skipLocking($skip_locking);
++  $previous_result = $skip_locking;
++}
++
++/**
+  * Implements hook_preprocess_views_view().
+  *
+  * When the line item summary and order total area handlers are present on Views
+diff --git a/modules/order/commerce_order_ui.module b/modules/order/commerce_order_ui.module
+index 43db91b..be20aac 100644
+--- a/modules/order/commerce_order_ui.module
++++ b/modules/order/commerce_order_ui.module
+@@ -34,6 +34,8 @@ function commerce_order_ui_menu() {
+   );
+ 
+   $items['admin/commerce/orders/%commerce_order'] = array(
++    // Load the order unlocked, the view page won't modify it.
++    'load arguments' => array(FALSE),
+     'title callback' => 'commerce_order_ui_order_title',
+     'title arguments' => array(3),
+     'page callback' => 'commerce_order_ui_order_view',
+@@ -42,12 +44,14 @@ function commerce_order_ui_menu() {
+     'access arguments' => array(3),
+   );
+   $items['admin/commerce/orders/%commerce_order/view'] = array(
++    'load arguments' => array(FALSE),
+     'title' => 'View',
+     'type' => MENU_DEFAULT_LOCAL_TASK,
+     'weight' => -10,
+     'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+   );
+   $items['admin/commerce/orders/%commerce_order/edit'] = array(
++    'load arguments' => array(TRUE),
+     'title' => 'Edit',
+     'page callback' => 'commerce_order_ui_order_form_wrapper',
+     'page arguments' => array(3),
+@@ -59,6 +63,7 @@ function commerce_order_ui_menu() {
+     'file' => 'includes/commerce_order_ui.orders.inc',
+   );
+   $items['admin/commerce/orders/%commerce_order/delete'] = array(
++    'load arguments' => array(TRUE),
+     'title' => 'Delete',
+     'page callback' => 'commerce_order_ui_order_delete_form_wrapper',
+     'page arguments' => array(3),
+@@ -85,6 +90,8 @@ function commerce_order_ui_menu() {
+   );
+ 
+   $items['user/%user/orders/%commerce_order'] = array(
++    // Load the order unlocked, since it won't be modified.
++    'load arguments' => array(FALSE),
+     'title callback' => 'commerce_order_ui_order_title',
+     'title arguments' => array(3),
+     'page callback' => 'commerce_order_ui_order_view',
+diff --git a/modules/order/tests/commerce_order.test b/modules/order/tests/commerce_order.test
+index 1164634..3b02b78 100644
+--- a/modules/order/tests/commerce_order.test
++++ b/modules/order/tests/commerce_order.test
+@@ -97,6 +97,49 @@ class CommerceOrderCRUDTestCase extends CommerceBaseTestCase {
+   }
+ 
+   /**
++   * Test order locking.
++   */
++  function testCommerceOrderLocking() {
++    $created_order = $this->createDummyOrder();
++    entity_get_controller('commerce_order')->resetCache();
++
++    // Ensure that loading locked and unlocked orders works.
++    $unlocked_order = commerce_order_load($created_order->order_id, FALSE);
++    $this->assertFalse(commerce_order_is_locked($unlocked_order), 'commerce_order_load() returned an unlocked order.');
++    $locked_order = commerce_order_load($created_order->order_id);
++    $this->assertTrue(commerce_order_is_locked($locked_order), 'commerce_order_load() returned a locked order.');
++
++    // Ensure that skipLocking() works.
++    entity_get_controller('commerce_order')->resetCache();
++    entity_get_controller('commerce_order')->skipLocking();
++    $unlocked_order = commerce_order_load($created_order->order_id);
++    $this->assertFalse(commerce_order_is_locked($unlocked_order), 'commerce_order_load() returned an unlocked order.');
++
++    // Simulate an order view that has a non-VBO form field.
++    $fake_view = new stdClass();
++    $fake_view->base_table = 'commerce_order';
++    $fake_view->field = array();
++    $fake_view->field['test'] = new StdClass();
++    $fake_view->field['test']->views_form_callback = 'test_callback';
++    commerce_order_views_pre_execute($fake_view);
++    $result = drupal_static('commerce_order_views_pre_execute', NULL);
++    $this->assertFalse($result, 'commerce_order_views_pre_execute() did not skip locking.');
++
++    // Simulate a VBO order view. Since the previous view required locking,
++    // locking should still not be skipped.
++    $fake_view->field['views_bulk_operations'] = $fake_view->field['test'];
++    commerce_order_views_pre_execute($fake_view);
++    $result = drupal_static('commerce_order_views_pre_execute', NULL);
++    $this->assertFalse($result, 'commerce_order_views_pre_execute() did not skip locking.');
++
++    // Start from scratch, test just the VBO order view.
++    drupal_static_reset('commerce_order_views_pre_execute');
++    commerce_order_views_pre_execute($fake_view);
++    $result = drupal_static('commerce_order_views_pre_execute', NULL);
++    $this->assertTrue($result, 'commerce_order_views_pre_execute() skipped locking.');
++  }
++
++  /**
+    * Test order Token replacement.
+    */
+   function testCommerceOrderTokens() {
+diff --git a/modules/payment/commerce_payment_ui.module b/modules/payment/commerce_payment_ui.module
+index bd728ae..db45ef8 100644
+--- a/modules/payment/commerce_payment_ui.module
++++ b/modules/payment/commerce_payment_ui.module
+@@ -13,6 +13,7 @@ function commerce_payment_ui_menu() {
+ 
+   // Payment tab on orders.
+   $items['admin/commerce/orders/%commerce_order/payment'] = array(
++    'load arguments' => array(TRUE),
+     'title' => 'Payment',
+     'page callback' => 'commerce_payment_ui_order_tab',
+     'page arguments' => array(3),

@@ -1,0 +1,35 @@
+diff --git a/field_collection.entity.inc b/field_collection.entity.inc
+index 2e8a11b..76e23ee 100644
+--- a/field_collection.entity.inc
++++ b/field_collection.entity.inc
+@@ -216,8 +216,16 @@ class FieldCollectionItemEntity extends Entity {
+    * @param object $entity
+    *   Host entity.
+    */
+-  public function updateHostEntity($entity) {
++  public function updateHostEntity($entity, $host_entity_type = null) {
+     $this->fetchHostDetails();
++    // If isn't possible to retrieve hostEntityType due the fact that it's not saved in DB yet,
++    // then we should fill info about hostEntity manually.
++    // It happens when we creating new revision of field collection entity and we need to relate it with new revision of host entity.
++    if (!$this->hostEntityType) {
++      $this->hostEntityType = $host_entity_type;
++      $this->hostEntity = $entity;
++      list($this->hostEntityId, $this->hostEntityRevisionId) = entity_extract_ids($this->hostEntityType, $this->hostEntity);
++    }
+     list($recieved_id) = entity_extract_ids($this->hostEntityType, $entity);
+ 
+     if ($this->isInUse()) {
+diff --git a/field_collection.module b/field_collection.module
+index db7b859..39c8968 100644
+--- a/field_collection.module
++++ b/field_collection.module
+@@ -450,7 +450,7 @@ function field_collection_field_update($host_entity_type, $host_entity, $field,
+           $entity->setHostEntity($host_entity_type, $host_entity, LANGUAGE_NONE, FALSE);
+         }
+         else {
+-          $entity->updateHostEntity($host_entity);
++          $entity->updateHostEntity($host_entity, $host_entity_type);
+         }
+ 
+         // If the host entity is saved as new revision, do the same for the item.

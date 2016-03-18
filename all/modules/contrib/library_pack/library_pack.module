@@ -1,0 +1,1128 @@
+<?php
+/**
+ * Implements hook_menu().
+ */
+function library_pack_menu() {
+
+  // Main menu item.
+  $items['admin/appearance/libraries'] = array(
+    'title' => 'Library Settings',
+    'description' => 'Load libraries',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('library_pack_settings'),
+    'access arguments' => array('administer themes'),
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 100,
+  );
+
+  // Global library configuration tab.
+  $items['admin/appearance/libraries/global'] = array(
+    'title' => 'Global settings',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -1,
+  );
+
+  // Add a local task for each available theme.
+  foreach (list_themes() as $theme) {
+    $items['admin/appearance/libraries/' . $theme->name] = array(
+      'title' => $theme->info['name'],
+      'page arguments' => array('library_pack_settings', $theme->name),
+      'type' => MENU_LOCAL_TASK,
+      'access callback' => '_system_themes_access',
+      'access arguments' => array($theme),
+    );
+  }
+
+  // Return the menu item definitions.
+  return $items;
+}
+
+/**
+ * Implements hook_init().
+ */
+function library_pack_init() {
+
+  // Retrieve the current theme name.
+  $current_theme = variable_get('theme_default', 'none');
+
+  // Retrieve the settings for all themes.
+  $all_settings = variable_get('library_pack_settings');
+
+  // Get the settings for a specific theme
+  if (isset($all_settings[$current_theme])) {
+    $settings = $all_settings[$current_theme];
+  }
+  else {
+    $settings = array();
+  }
+
+  // Get all the currently registered libraries.
+  $libraries = array();
+  foreach (libraries_info() as $name => $info) {
+    $libraries[$name] = libraries_detect($name);
+  }
+
+  // Sort the libraries by their array key.
+  ksort($libraries);
+
+  // Go through each library and load the ones chosen.
+  foreach ($libraries as $machine_name => $library) {
+    // Check to see if the library should be loaded.
+    if (isset($settings['libraries'][$machine_name]['load']) && $settings['libraries'][$machine_name]['load'] == 1) {
+      // Make sure the library still exists.
+      if (($library2 = libraries_detect($machine_name)) && !empty($library2['installed'])) {
+        // Load the library or speicifed variant.
+        libraries_load($machine_name);
+      }
+    }
+  }
+}
+
+/*
+ * Build the settings form.
+ *
+ * @param array $form
+ *   Nested array of form elements that comprise the form.
+ * @param array $form_state
+ *   A keyed array containing the current state of the form.
+ */
+function library_pack_settings($form, &$form_state, $key = 'global') {
+
+  // Save the current theme name in the form state.
+  $form_state['theme_key'] = $key;
+
+  // Retrieve the settings for all themes.
+  $all_settings = variable_get('library_pack_settings');
+
+  // Get the settings for a specific theme
+  if (isset($all_settings[$key])) {
+    $settings = $all_settings[$key];
+  }
+  else {
+    $settings = array();
+  }
+
+  // Libraries section title.
+  $form['libraries-title'] = array(
+    '#type' => 'item',
+    '#title' => 'Available Libraries',
+    '#description' => 'Below are all the libraries registered with your site, you can load a particular library by checking the box and choosing a variant.',
+  );
+
+  // Create a table for all the possible touch icons, the children of this
+  // element will not be rendered directly but will be referenced by each row of
+  // the table.
+  $form['libraries'] = array(
+    '#theme' => 'table',
+    '#header' => array(t('Load'), t('Library'), t('Status'), t('Version'), t('Variant'), t('Actions')),
+    '#rows' => array(),
+    '#tree' => TRUE,
+  );
+
+  // Get all the currently registered libraries.
+  $libraries = array();
+  foreach (libraries_info() as $name => $info) {
+    $libraries[$name] = libraries_detect($name);
+  }
+
+  // Sort the libraries by array key.
+  ksort($libraries);
+
+  // Generate the field markup for each library
+  foreach ($libraries as $machine_name => $library) {
+
+    $form['libraries'][$machine_name]['load'] = array(
+      '#type' => 'checkbox',
+      '#description' => '',
+      '#default_value' => (isset($settings['libraries'][$machine_name]['load']) ? $settings['libraries'][$machine_name]['load'] : 0),
+    );
+
+    // Build the variants options array.
+    $variants = array('default' => 'default');
+    $variants += array_keys($library['variants']);
+
+
+    $form['libraries'][$machine_name]['variant'] = array(
+      '#type' => 'select',
+      '#description' => '',
+      '#options' => $variants,
+      '#default_value' => (isset($settings['libraries'][$machine_name]['variant']) ? $settings['libraries'][$machine_name]['variant'] : 'default')
+    );
+
+    // If the library isnt present then you can t load it.
+    if (!$library['installed']) {
+      $form['libraries'][$machine_name]['load']['#disabled'] = TRUE;
+      $form['libraries'][$machine_name]['variant']['#disabled'] = TRUE;
+    }
+
+    // Add a table row.
+    $form['libraries']['#rows'][] = array(
+      'data' => array(
+        array('data' => &$form['libraries'][$machine_name]['load']),
+        t('@name<br />@file', array(
+          '@name' => $library['name'] . ' (' . $machine_name . ')',
+          '@file' => 'sites/all/libraries/' . $machine_name . '/' . $library['version arguments']['file'],
+        )),
+        ($library['installed'] ? t('OK') : drupal_ucfirst($library['error'])),
+        (isset($library['version']) ? $library['version'] : ''),
+        array('data' => &$form['libraries'][$machine_name]['variant']),
+        t('<a href="@vendor-url">Homepage</a>&nbsp;|&nbsp;<a href="@download-url">Download</a>', array(
+            '@vendor-url' => $library['vendor url'],
+            '@download-url' => $library['download url'],
+          )
+        )
+      ),
+      'class' => array(
+        ($library['installed'] ? 'ok' : 'warning')
+      )
+    );
+  }
+
+  // Library download instructions.
+  $form['libraries-make'] = array(
+    '#type' => 'item',
+    '#title' => 'Download all libraries with drush',
+    '#description' => 'You can download libaries using the following drush command.',
+  );
+
+  // Library download drush make command.
+  $form['libraries-command'] = array(
+    '#markup' => '<pre>drush make ' . drupal_get_path('module', 'library_pack') . '/library_pack.make --no-core</pre>',
+  );
+
+  // Libraries block tutorial.
+  $form['libraries-attach'] = array(
+    '#type' => 'item',
+    '#title' => 'Attaching Library files to a block.',
+    '#description' => 'You dont have to load a library on every page to use it, you can attach it to a block definition to use it only when that block is in use.',
+  );
+
+  // Libraries block tutorial example.
+  $form['libraries-attach-example'] = array(
+    '#markup' => '<pre>
+$block[\'content\'][\'#attached\'][\'libraries_load\'][] = array(\'mylibrary\');</pre>',
+  );
+
+  // Submit button.
+  $form['actions']['#type'] = 'actions';
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save configuration'),
+  );
+
+  // Display an error message if the settings cant be saved
+  if (!empty($_POST) && form_get_errors()) {
+    drupal_set_message(t('The settings have not been saved because of the errors.'), 'error');
+  }
+
+  // Add a submit handler to save the settings.
+  $form['#submit'][] = 'library_pack_theme_settings_submit';
+
+  // Render the form using theme_system_settings_form().
+  $form['#theme'] = 'system_settings_form';
+
+  return $form;
+}
+
+/**
+ * Custom Submit handler for the theme settings form.
+ *
+ * @param array $form
+ *   Nested array of form elements that comprise the form.
+ * @param array $form_state
+ *   A keyed array containing the current state of the form.
+ */
+function library_pack_theme_settings_submit($form, &$form_state) {
+
+  $data_to_save = variable_get('library_pack_settings');
+
+  // Remove internal Form API values.
+  unset($form_state['values']['form_id'], $form_state['values']['form_token'], $form_state['values']['form_build_id'], $form_state['values']['op'], $form_state['values']['submit']
+  );
+
+  // Retrieve the current theme name that was saved when the form was defined.
+  $theme = $form_state['theme_key'];
+
+  // Wipe the settings.
+  $data_to_save[$theme] = array();
+
+  foreach ($form_state['values'] as $key => $value) {
+    if (is_array($value) && isset($form_state['values']['array_filter'])) {
+      $value = array_keys(array_filter($value));
+    }
+    $data_to_save[$theme][$key] = $value;
+  }
+
+  // Save the settings.
+  variable_set('library_pack_settings', $data_to_save);
+
+  drupal_set_message(t('The configuration options have been saved.'));
+}
+
+function library_pack_libraries_info() {
+  $libraries['bootstrap'] = array(
+    'name' => 'Twitter Bootstrap',
+    'vendor url' => 'http://twitter.github.com',
+    'download url' => 'http://twitter.github.com/bootstrap/assets/bootstrap.zip',
+    'version arguments' => array(
+      'file' => 'css/bootstrap.css',
+      'pattern' => '/Bootstrap v([0-9a-zA-Z\.-]+)/',
+      'lines' => 3,
+      'cols' => 50,
+    ),
+    'files' => array(
+      'js' => array(
+        'js/bootstrap.js',
+      ),
+      'css' => array(
+        'css/bootstrap.css',
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'js/bootstrap.min.js',
+          ),
+          'css' => array(
+            'css/bootstrap.min.css',
+          ),
+        ),
+      ),
+    ),
+  );
+
+
+  // jQuery Masonry
+  $libraries['jquery.masonry'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'jQuery Masonry',
+    'vendor url' => 'https://github.com/desandro/masonry',
+    'download url' => 'https://github.com/desandro/masonry/zipball/master',
+    'version arguments' => array(
+      'file' => 'jquery.masonry.js',
+      'pattern' => '/jQuery Masonry v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.masonry.js',
+      ),
+    )
+  );
+
+  // Isotope
+  $libraries['jquery.isotope'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'Isotope',
+    'vendor url' => 'https://github.com/desandro/isotope',
+    'download url' => 'https://github.com/desandro/isotope/zipball/master',
+    'version arguments' => array(
+      'file' => 'jquery.isotope.js',
+      'pattern' => '/Isotope v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.isotope.js',
+      ),
+    )
+  );
+
+  // jQuery Scrollpane
+  $libraries['jquery.jscrollpane'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'jScrollPane',
+    'vendor url' => 'https://github.com/dmitryf/elements',
+    'download url' => 'https://github.com/dmitryf/elements/zipball/master',
+    'version arguments' => array(
+      'file' => 'jquery.jscrollpane.js',
+      'pattern' => '/jScrollPane - v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.jscrollpane.js',
+      ),
+      'css' => array(
+        'jquery.jscrollpane.css',
+      )
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'jquery.jscrollpane.min.js'
+          ),
+          'css' => array(
+            'jquery.jscrollpane.css'
+          ),
+        ),
+      ),
+    ),
+  );
+
+  // jQuery Cycle
+  $libraries['jquery.cycle'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'jQuery Cycle',
+    'vendor url' => 'http://malsup.github.com/jquery.cycle.all.js',
+    'download url' => 'http://malsup.github.com/jquery.cycle.all.js',
+    'version arguments' => array(
+      'file' => 'jquery.cycle.all.js',
+      'pattern' => '/Version: ([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.cycle.all.js',
+      ),
+    )
+  );
+
+  $libraries['jquery.cycle2'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'jQuery Cycle2',
+    'vendor url' => 'http://jquery.malsup.com/cycle2',
+    'download url' => 'http://jquery.malsup.com/cycle2/download/',
+    'version arguments' => array(
+      'file' => 'jquery.cycle2.js',
+      'pattern' => '/version: ([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.cycle2.js',
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'jquery.cycle2.min.js'
+          ),
+        ),
+      ),
+    ),
+  );
+
+  // jQuery Hover Intent Plugin
+  $libraries['jquery.hoverIntent'] = array(
+    'name' => 'jQuery Hover Intent',
+    'vendor url' => 'https://github.com/briancherne/jquery-hoverIntent',
+    'download url' => 'https://github.com/briancherne/jquery-hoverIntent/zipball/master',
+    'version arguments' => array(
+      'file' => 'jquery.hoverIntent.js',
+      'pattern' => '/hoverIntent r([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.hoverIntent.js',
+      ),
+    )
+  );
+
+
+  $libraries['normalize'] = array(
+    'name' => 'Normalize CSS',
+    'vendor url' => 'https://raw.github.com/necolas/normalize.css/master/normalize.css',
+    'download url' => 'https://raw.github.com/necolas/normalize.css/master/normalize.css',
+    'version arguments' => array(
+      'file' => 'normalize.css',
+      'pattern' => '/normalize.css v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'css' => array(
+        'normalize.css',
+      ),
+    )
+  );
+
+
+  $libraries['jquery.formalize'] = array(
+    'name' => 'Formalize',
+    'vendor url' => 'https://github.com/nathansmith/formalize',
+    'download url' => 'https://github.com/nathansmith/formalize/zipball/master',
+    'version arguments' => array(
+      'file' => 'js/jquery.formalize.js',
+      'pattern' => '/Formalize - version ([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'css' => array(
+        'js/formalize.css',
+      ),
+      'js' => array(
+        'js/jquery.formalize.js'
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'jquery.formalize.min.js'
+          ),
+          'css' => array(
+            'js/formalize.css',
+          ),
+        ),
+      ),
+    ),
+  );
+
+  // Modernizr
+  $libraries['modernizr'] = array(
+    'name' => 'Modernizr',
+    'vendor url' => 'http://modernizr.com/',
+    'download url' => 'http://modernizr.com/',
+    'version arguments' => array(
+      'file' => 'modernizr.min.js',
+      'pattern' => '/Modernizr v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'modernizr.js' => array(
+          'every_page' => TRUE,
+          'group' => JS_LIBRARY,
+          'preprocess' => 0,
+          'scope' => 'header',
+          'type' => 'file',
+          'weight' => -9999,
+        )
+      ),
+    )
+  );
+
+  // qtip2
+  $libraries['jquery.qtip2'] = array(
+    'name' => 'jQuery Qtip2',
+    'vendor url' => 'https://github.com/Craga89/qTip2',
+    'download url' => 'https://github.com/Craga89/qTip2/zipball/master',
+    'version arguments' => array(
+      'file' => 'jquery.qtip.js',
+      'pattern' => '/Pretty powerful tooltips - v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.qtip.js'
+      ),
+      'css' => array(
+        'jquery.qtip.css'
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'jquery.qtip.min.js'
+          ),
+          'css' => array(
+            'jquery.qtip.min.css'
+          ),
+        ),
+      ),
+    ),
+  );
+
+
+  // iscroll4
+  $libraries['iscroll4'] = array(
+    'name' => 'iScroll4',
+    'vendor url' => 'https://github.com/cubiq/iscroll',
+    'download url' => 'https://github.com/cubiq/iscroll/zipball/master',
+    'version arguments' => array(
+      'file' => 'src/iscroll.js',
+      'pattern' => '/iScroll v([0-9a-zA-Z\.-]+)/',
+    ),
+  );
+
+  $libraries['jquery.chosen'] = array(
+    'name' => 'jQuery Chosen',
+    'vendor url' => 'http://harvesthq.github.com/chosen/',
+    'download url' => 'https://github.com/harvesthq/chosen/zipball/master',
+    'version arguments' => array(
+      'file' => 'chosen.jquery.js',
+      'pattern' => '/Version ([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'chosen.jquery.js'
+      ),
+      'css' => array(
+        'chosen.css'
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'chosen.jquery.min.js'
+          ),
+          'css' => array(
+            'chosen.css'
+          ),
+        ),
+      ),
+    ),
+  );
+
+
+  $libraries['select2'] = array(
+    'name' => 'Select2',
+    'vendor url' => 'http://ivaynberg.github.com/select2/',
+    'download url' => 'https://github.com/ivaynberg/select2/zipball/master',
+    'version arguments' => array(
+      'file' => 'select2.js',
+      'pattern' => '/Version: ([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'select2.js'
+      ),
+      'css' => array(
+        'select2.css'
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'select2.min.js'
+          ),
+          'css' => array(
+            'select2.css'
+          ),
+        ),
+      ),
+    ),
+  );
+
+  $libraries['html5shiv'] = array(
+    'name' => 'HTML5 Shiv',
+    'vendor url' => 'http://code.google.com/p/html5shiv/',
+    'download url' => 'https://github.com/aFarkas/html5shiv/zipball/master',
+    'version arguments' => array(
+      'file' => 'html5shiv.js',
+      'pattern' => '/HTML5 Shiv v([0-9a-zA-Z\.-]+)/',
+    ),
+  );
+
+
+
+
+  // Underscore Javascript Library
+  $libraries['underscore'] = array(
+    'name' => 'Underscore',
+    'vendor url' => 'https://github.com/documentcloud/underscore',
+    'download url' => 'https://github.com/documentcloud/underscore/zipball/master',
+    'version arguments' => array(
+      'file' => 'underscore.js',
+      'pattern' => '/Underscore.js (\d+)/',
+      'lines' => 1,
+    ),
+    'files' => array(
+      'js' => array(
+        'underscore.js',
+      )
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'underscore-min.js',
+          )
+        ),
+      ),
+    ),
+  );
+
+
+
+
+  // jQuery Hammer.
+  $libraries['hammer'] = array(
+    'name' => 'Hammer JS',
+    'vendor url' => 'https://github.com/eightmedia/hammer.js',
+    'download url' => 'https://github.com/EightMedia/hammer.js/zipball/master',
+    'version arguments' => array(
+      'file' => 'hammer.js',
+      'pattern' => '/- v([0-9a-zA-Z\.-]+)/',
+    ), 'files' => array(
+      'js' => array(
+        'hammer.js',
+      ),
+    )
+  );
+
+
+  // jQuery Hammer.
+  $libraries['jquery.hammer'] = array(
+    'name' => 'Hammer JS',
+    'vendor url' => 'https://github.com/eightmedia/hammer.js',
+    'download url' => 'https://github.com/EightMedia/hammer.js/zipball/master',
+    'version arguments' => array(
+      'file' => 'jquery.hammer.js',
+      'pattern' => '/version ([0-9a-zA-Z\.-]+)/',
+    ), 'files' => array(
+      'js' => array(
+        'jquery.hammer.js'
+      ),
+    )
+  );
+
+  // jQuery Fitvids.
+  $libraries['jquery.fitvids'] = array(
+    'name' => 'FtiVids JS',
+    'vendor url' => 'https://github.com/davatron5000/FitVids.js',
+    'download url' => 'https://github.com/davatron5000/FitVids.js',
+    'version arguments' => array(
+      'file' => 'jquery.fitvids.js',
+      'pattern' => '/ FitVids ([0-9a-zA-Z\.-]+)/',
+    ), 'files' => array(
+      'js' => array(
+        'jquery.fitvids.js'
+      ),
+    )
+  );
+
+  // jQuery timeago.
+  $libraries['jquery.timeago'] = array(
+    'name' => 'jQuery Timeago',
+    'vendor url' => 'http://timeago.yarp.com/jquery.timeago.js',
+    'download url' => 'http://timeago.yarp.com/jquery.timeago.js',
+    'version arguments' => array(
+      'file' => 'jquery.timeago.js',
+      'pattern' => '/@version ([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.timeago.js',
+      ),
+    )
+  );
+
+  // jQuery colorpicker.
+  $libraries['colorpicker'] = array(
+    'name' => 'colorpicker',
+    'vendor url' => 'http://www.eyecon.ro/colorpicker',
+    'download url' => 'http://www.eyecon.ro/colorpicker/colorpicker.zip',
+    'version callback' => '_library_pack_force_version',
+    'version arguments' => array(
+      'file' => 'js/colorpicker.js',
+      'force' => '1'
+    ),
+
+    'files' => array(
+      'css' => array(
+        'css/colorpicker.css',
+      ),
+      'js' => array(
+        'js/colorpicker.js',
+      ),
+    )
+  );
+
+  // jQuery enquire.
+  $libraries['enquire.js'] = array(
+    'name' => 'Enquire JS',
+    'vendor url' => 'https://github.com/WickyNilliams/enquire.js',
+    'download url' => 'https://github.com/WickyNilliams/enquire.js',
+    'version arguments' => array(
+      'file' => 'dist/enquire.js',
+      'pattern' => '/enquire.js v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+
+        'dist/enquire.js'=> array(
+          'every_page' => TRUE,
+          'group' => JS_LIBRARY,
+          'preprocess' => 0,
+          'scope' => 'header',
+          'type' => 'file',
+          'weight' => -9999,
+        )
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'dist/enquire.min.js'
+          ),
+        ),
+      ),
+    ),
+  );
+
+
+
+
+  // jQuery jCarsousel.
+  $libraries['jquery.jcarousel'] = array(
+    'name' => 'jQuery jcarousel',
+    'vendor url' => 'http://sorgalla.com/jcarousel/',
+    'download url' => 'https://github.com/jsor/jcarousel',
+    'version callback' => '_library_pack_force_version',
+    'version arguments' => array(
+      'file' => 'dist/jquery.jcarousel.js',
+      'force' => '0.3.0'
+    ),
+    'files' => array(
+      'js' => array(
+        'dist/jquery.jcarousel.js',
+        'dist/jquery.jcarousel-control.js',
+      ),
+    ),
+  );
+
+
+  $libraries['jquery.roundabout'] = array(
+    'name' => 'jQuery roundabout',
+    'vendor url' => 'https://github.com/fredhq/roundabout',
+    'download url' => 'https://github.com/fredhq/roundabout/zipball/v2.4.2',
+    'version arguments' => array(
+      'file' => 'jquery.roundabout.js',
+      'pattern' => '/Roundabout - v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.roundabout.js',
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'jquery.roundabout.min.js'
+          ),
+        ),
+      ),
+    ),
+  );
+
+
+  $libraries['jquery.roundabout-shapes'] = array(
+    'name' => 'jQuery roundabout shapes',
+    'vendor url' => 'http://fredhq.com/projects/roundabout-shapes',
+    'download url' => 'https://github.com/fredhq/roundabout-shapes/zipball/master',
+    'version arguments' => array(
+      'file' => 'jquery.roundabout-shapes.js',
+      'pattern' => '/jQuery Roundabout Shapes v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.roundabout-shapes.js',
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'jquery.roundabout-shapes.min.js'
+          ),
+        ),
+      ),
+    ),
+  );
+
+
+  // jQuery cookie.
+  $libraries['jquery.cookie'] = array(
+    'name' => 'jQuery Cookie',
+    'vendor url' => 'https://github.com/carhartl/jquery-cookie',
+    'download url' => 'https://github.com/carhartl/jquery-cookie/archive/master.zip',
+    'version arguments' => array(
+      'file' => 'jquery.cookie.js',
+      'pattern' => '/Cookie Plugin v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.cookie.js',
+      )
+    )
+  );
+
+  // jQuery appear.
+  $libraries['jquery.appear'] = array(
+    'name' => 'jQuery Appear',
+    'vendor url' => 'https://github.com/morr/jquery.appear',
+    'download url' => 'https://github.com/morr/jquery.appear/archive/master.zip',
+    'version arguments' => array(
+      'file' => 'jquery.appear.js',
+      'pattern' => '/Version: ([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.appear.js',
+      )
+    )
+  );
+
+  // jQuery placeholder.
+  $libraries['jquery.placeholder'] = array(
+    'name' => 'jQuery Placeholder',
+    'vendor url' => 'http://mths.be/placeholder',
+    'download url' => 'http://mths.be/placeholder',
+    'version arguments' => array(
+      'file' => 'jquery.placeholder.js',
+      'pattern' => '/placeholder v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.placeholder.js',
+      )
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'jquery.placeholder.min.js',
+          )
+        ),
+      ),
+    ),
+  );
+
+
+  // jQuery select-to-ui-slider.
+  $libraries['jquery.select-to-ui-slider'] = array(
+    'name' => 'jQuery Select To UI Slider',
+    'vendor url' => 'http://www.filamentgroup.com/examples/slider_v2/FilamentGroup_selectToUISlider.zip',
+    'download url' => 'http://www.filamentgroup.com/examples/slider_v2/FilamentGroup_selectToUISlider.zip',
+    'version callback' => '_library_pack_force_version',
+    'version arguments' => array(
+      'file' => 'js/selectToUISlider.jQuery.js',
+      'force' => '1.0'
+    ),
+    'files' => array(
+      'js' => array(
+        'js/selectToUISlider.jQuery.js',
+      ),
+      'css' => array(
+        'css/ui.slider.extras.css'
+      )
+    ),
+
+  );
+
+
+
+  // jQuery slicknav.
+  $libraries['jquery.slicknav'] = array(
+    'name' => 'jQuery slicknav',
+    'vendor url' => 'https://github.com/ComputerWolf/SlickNav',
+    'download url' => 'https://github.com/ComputerWolf/SlickNav',
+    'version callback' => '_library_pack_force_version',
+    'version arguments' => array(
+      'file' => 'jquery.slicknav.js',
+      'force' => '0.0.1'
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.slicknav.js',
+      ),
+      'css' => array(
+        'slicknav.css',
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'jquery.slicknav.min.js',
+          ),
+          'css' => array(
+            'slicknav.css',
+          )
+        ),
+      ),
+    ),
+  );
+
+
+  // jQuery flexnav.
+  $libraries['jquery.flexnav'] = array(
+    'name' => 'jQuery flexnav',
+    'vendor url' => 'https://github.com/indyplanets/flexnav',
+    'download url' => 'https://github.com/indyplanets/flexnav',
+    'version arguments' => array(
+      'file' => 'js/jquery.flexnav.js',
+      'pattern' => '/FlexNav.js ([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'js/jquery.flexnav.js',
+      ),
+      'css' => array(
+        'css/flexnav.css',
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'js/jquery.flexnav.min.js',
+          ),
+          'css' => array(
+            'css/flexnav.css',
+          )
+        ),
+      ),
+    ),
+  );
+
+  // selectivizr
+  $libraries['selectivizr'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'selectivizr',
+    'vendor url' => 'https://github.com/keithclark/selectivizr',
+    'download url' => 'https://github.com/keithclark/selectivizr',
+    'version arguments' => array(
+      'file' => 'selectivizr.js',
+      'pattern' => '/selectivizr v([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'selectivizr.js',
+      ),
+    )
+  );
+
+  // respond
+  $libraries['Respond'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'Respond',
+    'vendor url' => 'https://github.com/scottjehl/Respond',
+    'download url' => 'https://github.com/scottjehl/Respond',
+    'version arguments' => array(
+      'file' => 'dest/respond.src.js',
+      'pattern' => '/Respond.js v([0-9a-zA-Z\.-]+)/'
+    ),
+    'files' => array(
+      'js' => array(
+        'dest/respond.src.js'=> array(
+          'every_page' => TRUE,
+          'group' => JS_LIBRARY,
+          'preprocess' => 0,
+          'scope' => 'header',
+          'type' => 'file',
+          'weight' => -10000,
+        ),
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'dest/respond.min.js',
+          ),
+        ),
+      ),
+    ),
+  );
+
+
+  // News Ticker
+  $libraries['jquery.newsticker'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'jquery.newsticker',
+    'vendor url' => 'http://makemineatriple.com/newsticker#download',
+    'download url' => 'http://makemineatriple.com/newsticker#download',
+    'version arguments' => array(
+      'file' => 'jquery.newsticker.js',
+      'pattern' => '/version ([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' => array(
+        'jquery.newsticker.js',
+      ),
+    )
+  );
+
+  // Matchmedia
+  $libraries['matchMedia.js'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'matchMedia.js',
+    'vendor url' => 'https://github.com/paulirish/matchMedia.js',
+    'download url' => 'https://github.com/paulirish/matchMedia.js',
+    'version arguments' => array(
+      'file' => 'bower.json',
+      'pattern' => '/version": "([0-9a-zA-Z\.-]+)/',
+    ),
+    'files' => array(
+      'js' =>  array(
+        'matchMedia.js'=> array(
+          'every_page' => TRUE,
+          'group' => JS_LIBRARY,
+          'preprocess' => 0,
+          'scope' => 'header',
+          'type' => 'file',
+          'weight' => -9999,
+        ),
+      )
+    ),
+    'variants' => array(
+      'addListener' => array(
+        'files' => array(
+          'js' => array(
+            'matchMedia.js'=> array(
+              'every_page' => TRUE,
+              'group' => JS_LIBRARY,
+              'preprocess' => 0,
+              'scope' => 'header',
+              'type' => 'file',
+              'weight' => -9999,
+            ),
+            'matchMedia.addListener.js'=> array(
+              'every_page' => TRUE,
+              'group' => JS_LIBRARY,
+              'preprocess' => 0,
+              'scope' => 'header',
+              'type' => 'file',
+              'weight' => -9998,
+            ),
+          )
+        ),
+      ),
+    ),
+  );
+
+  // On Media Query
+  $libraries['on-media-query'] = array(
+    // Only used in administrative UI of Libraries API.
+    'name' => 'On Media Query',
+    'vendor url' => 'https://github.com/JoshBarr/on-media-query',
+    'download url' => 'https://github.com/JoshBarr/on-media-query',
+    'version callback' => '_library_pack_force_version',
+    'version arguments' => array(
+      'file' => 'js/onmediaquery.js',
+      'force' => '1',
+    ),
+    'files' => array(
+      'js' => array(
+        'js/onmediaquery.js',
+      ),
+    ),
+    'variants' => array(
+      'minified' => array(
+        'files' => array(
+          'js' => array(
+            'js/onmediaquery.min.js',
+          ),
+        ),
+      ),
+    ),
+  );
+
+  return $libraries;
+}
+
+
+/**
+ *
+ * @param type $library
+ * @param type $options
+ * @return type
+ */
+function _library_pack_force_version($library,$options) {
+  $file = DRUPAL_ROOT . '/' . $library['library path'] . '/' . $options['file'];
+  if (empty($options['file']) || !file_exists($file)) {
+    return;
+  }
+  return $library['version arguments']['force'];
+}
