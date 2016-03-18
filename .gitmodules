@@ -16,3 +16,6 @@
 [submodule "all/modules/features/paragraph_page"]
 	path = all/modules/features/paragraph_page
 	url = git@github.com:alexharries/paragraph_page.git
+[submodule "all/modules/features/related_items_by_taxonomy"]
+	path = all/modules/features/related_items_by_taxonomy
+	url = git@github.com:alexharries/related_items_by_taxonomy.git
