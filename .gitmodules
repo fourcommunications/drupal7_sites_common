@@ -13,12 +13,6 @@
 [submodule "all/modules/custom/greyhead_megamenu"]
 	path = all/modules/custom/greyhead_megamenu
 	url = git@github.com:alexharries/greyhead_megamenu.git
-[submodule "all/modules/features/paragraph_page"]
-	path = all/modules/features/paragraph_page
-	url = git@github.com:alexharries/paragraph_page.git
-[submodule "all/modules/features/related_items_by_taxonomy"]
-	path = all/modules/features/related_items_by_taxonomy
-	url = git@github.com:alexharries/related_items_by_taxonomy.git
 [submodule "all/themes/greyhead_bootstrap"]
 	path = all/themes/greyhead_bootstrap
 	url = git@github.com:alexharries/greyhead_bootstrap.git
