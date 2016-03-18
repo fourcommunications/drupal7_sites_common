@@ -19,3 +19,6 @@
 [submodule "all/modules/features/related_items_by_taxonomy"]
 	path = all/modules/features/related_items_by_taxonomy
 	url = git@github.com:alexharries/related_items_by_taxonomy.git
+[submodule "all/themes/greyhead_bootstrap"]
+	path = all/themes/greyhead_bootstrap
+	url = git@github.com:alexharries/greyhead_bootstrap.git
