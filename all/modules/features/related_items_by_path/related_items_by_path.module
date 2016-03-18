@@ -1,0 +1,556 @@
+<?php
+/**
+ * @file
+ * Code for the Related Items feature.
+ */
+
+/**
+ * Define a standardised line ending.
+ */
+define('related_items_by_taxonomy_LINE_ENDING', "\n");
+
+/**
+ * Define the default cache time - 1 hour, in seconds.
+ */
+define('related_items_by_taxonomy_CACHE_TIME_DEFAULT', 1 * 60 * 60);
+
+/**
+ * Define the name of the image to be used if we don't have an image available.
+ */
+define('related_items_by_taxonomy_BLANK_IMAGE', 'white-450x400.png');
+
+/**
+ * Also define the name of the image as it should be saved to the files
+ * directory.
+ */
+define('related_items_by_taxonomy_IMAGE_FILESYSTEM_NAME', 'related-items-' . related_items_by_taxonomy_BLANK_IMAGE);
+
+include_once 'related_items_by_taxonomy.features.inc';
+
+/**
+ * Implements hook_block_info().
+ */
+function related_items_by_taxonomy_block_info() {
+  $blocks['related_items_by_taxonomy_block'] = array(
+    'info' => t('Related items by path'),
+    'cache' => DRUPAL_CACHE_PER_PAGE,
+    'status' => TRUE,
+    'region' => 'content',
+    'weight' => 5,
+    'visibility' => BLOCK_VISIBILITY_LISTED,
+    // We implode an array of paths which we don't want to see this block
+    // displayed on, for code readability.
+    'pages' => '',
+  );
+
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function related_items_by_taxonomy_block_view($delta = '') {
+  $return_array = array();
+
+  if ($delta == 'related_items_by_taxonomy_block') {
+    $items = related_items_by_taxonomy_related_items();
+
+    if (is_array($items) && !empty($items)) {
+      $return_array = array(
+        // The block title.
+        'subject' => variable_get('related_items_by_taxonomy_block_title', 'We think you\'d like...'),
+        // The block's content, as a renderableableable array.
+        'content' => array(
+          '#type' => 'container',
+          '#attributes' => array(
+            'class' => array('related-items'),
+          ),
+          'related_items_by_taxonomy' => array(
+            '#markup' => theme('related_items_by_taxonomy_items', array('related_items' => $items)),
+          ),
+        ),
+      );
+    }
+  }
+
+  return $return_array;
+}
+
+/**
+ * Determine the related items for the node $nid.
+ *
+ * This function checks the node for a field_related_items_by_taxonomy_manual field
+ * which can contain zero or more node references. If there fewer than four
+ * related items in this list, we load the related_items_by_taxonomy view to try and
+ * fill in the space with automagically-selected nodes based on having similar
+ * taxonomy terms.
+ *
+ * @param null $nid int The node ID. If null, we attempt to get the nid from the
+ *                  URL; if not possible, this function returns an empty array.
+ *
+ * @return array An array of zero or more related items.
+ */
+function related_items_by_taxonomy_related_items($nid = NULL) {
+  // Initialise our items array.
+  $items = array();
+
+  // Get the NID if not already provided.
+  if (is_null($nid)) {
+    // Only show when we're viewing the published version of this page - it is
+    // a bit too fiddly to get the draft version's vid to work with Workbench.
+    if ((arg(0) == 'node') && is_numeric(arg(1)) && empty(arg(2))) {
+//      (empty(arg(2)) || in_array(arg(2), array('draft', 'current-revision')))) {
+      $nid = arg(1);
+    }
+    else {
+      return $items;
+    }
+  }
+
+  // Are we on a valid node?
+  if (!($node = node_load(arg(1)))) {
+    return $items;
+  }
+
+  // Are we viewing a node type which should have related items?
+  if (!in_array($node->type, related_items_by_taxonomy_node_types())) {
+    return $items;
+  }
+
+  // Do we have cached results for this page?
+  // Generate the cache ID for this data.
+  $cid = __FUNCTION__ . ':' . $nid . ':' . $node->vid;
+
+  // Create a boolean which tells us whether we need to regenerate the results.
+  $cache_available = FALSE;
+
+  // Is caching enabled?
+  if (variable_get('related_items_by_taxonomy_cache', TRUE)) {
+    // Check the cache for this data. If not available, generate it now.
+    if ($cache = cache_get($cid)) {
+      $items = $cache->data;
+
+      // Check that the cache entry isn't older than the last-updated time for the
+      // node; if the node has been updated since the cache was generated, we
+      // invalidate the cache by recreating the related items, to avoid seeing
+      // stale items.
+      if ($cache->created >= $node->changed) {
+        $cache_available = TRUE;
+      }
+    }
+  }
+
+  // Do we need to regenerate the results?
+  if (!$cache_available) {
+    // Generate the data and store in the cache.
+    $items = $related_items = array();
+
+    // How many items do we want?
+    $related_items_required = variable_get('related_items_by_taxonomy_items_per_block', 4);
+
+    // Set a counter which indicates how many manually promoted items have come
+    // from the field_related_items_by_taxonomy_manual field.
+    $manually_promoted_count = 0;
+
+    // Do we have any manually-selected related items on this node?
+    if ($related_items_by_taxonomy = field_get_items('node', $node, 'field_related_items_by_taxonomy_manual')) {
+      // The node IDs are in the [n]['target_id'] array key.
+      foreach ($related_items_by_taxonomy as $row => $node_promoted_content_row) {
+        // Don't allow this node to link back to itself.
+        if (($node_promoted_content_row['target_id'] != $nid)
+          && ($node_promoted_content_node = node_load($node_promoted_content_row['target_id']))
+        ) {
+          $related_items[$node_promoted_content_node->nid] = related_items_by_taxonomy_get_related_item_info($node_promoted_content_node);
+        }
+      }
+
+      // Also update the offset counter.
+      $manually_promoted_count = count($related_items);
+    }
+
+    // If we got more than the required number of items from the manual list,
+    // randomly select $related_items_required from the list.
+    if ($manually_promoted_count > $related_items_required) {
+      $related_items_copy = $related_items;
+      unset($related_items);
+
+      foreach (array_rand($related_items_copy, $related_items_required) as $key) {
+        $related_items[$key] = $related_items_copy[$key];
+      }
+    }
+    // If we didn't get enough manually chosen related items, fill the gaps with
+    // items from the related_content view.
+    elseif ($manually_promoted_count < $related_items_required) {
+      // Loop through each result.
+      foreach (views_get_view_result('related_content', 'related_content_block') as $related_item) {
+        // Do we have room for this item? If not, break.
+        if (count($related_items) >= $related_items_required) {
+          break;
+        }
+
+        // Add it in to the related items array.
+        $related_items[$related_item->nid] = related_items_by_taxonomy_get_related_item_info(node_load($related_item->nid));
+      }
+    }
+
+    foreach ($related_items as $related_item) {
+      // Get the title, image, summary text and path for the node and theme it.
+      $item = array(
+        'top_section' => $related_item['top_section'],
+        'title' => $related_item['title'],
+        'image' => $related_item['image'],
+        'summary_text' => $related_item['summary_text'],
+        'path' => $related_item['path'],
+      );
+
+      $items[] = $item;
+    }
+
+    // Is caching enabled?
+    if (variable_get('related_items_by_taxonomy_cache', TRUE)) {
+      // Store results in the cache.
+      cache_set($cid, $items, 'cache', (REQUEST_TIME + variable_get('related_items_by_taxonomy_cache_time', related_items_by_taxonomy_CACHE_TIME_DEFAULT)));
+    }
+  }
+
+  return $items;
+}
+
+/**
+ * Implements hook_theme().
+ *
+ * Register the theme function which renders out a list of related nodes.
+ */
+function related_items_by_taxonomy_theme($existing, $type, $theme, $path) {
+  return array(
+    'related_items_by_taxonomy_items' => array(
+      'template' => 'related-items-by-taxonomy--items',
+      'path' => drupal_get_path('module', 'related_items_by_taxonomy') . '/templates',
+      'variables' => array('related_items' => NULL),
+    ),
+    'related_items_by_taxonomy_item' => array(
+      'template' => 'related-items-by-taxonomy--item',
+      'path' => drupal_get_path('module', 'related_items_by_taxonomy') . '/templates',
+      'variables' => array(
+        'top_section' => NULL,
+        'title' => NULL,
+        'image' => NULL,
+        'summary_text' => NULL,
+        'path' => NULL,
+      ),
+    ),
+  );
+}
+
+/**
+ * Get the title, image and summary text for a node.
+ *
+ * @param $node
+ *
+ * @return array
+ */
+function related_items_by_taxonomy_get_related_item_info($node) {
+  // Get the image and summary (this is so long-winded. Am I doing it
+  // wrong? Le sigh...).
+
+  // Get the current language.
+  global $language;
+  $language_code = $language->language;
+
+  // Loop through the image fields which we want to consider for inclusion.
+  $image_fields = variable_get('related_items_by_taxonomy_image_fields', array('field_header_image'));
+  $selected_image = $image_uri = NULL;
+
+  foreach ($image_fields as $image_field_name) {
+    $field_images = field_get_items('node', $node, $image_field_name, $language_code);
+    if (is_array($field_images) && (!empty($field_images))) {
+      $selected_image = field_view_value('node', $node, $image_field_name, $field_images[0]);
+      break;
+    }
+  }
+
+  // Did we get an image? If so, format it to the correct image style.
+  if (!is_null($selected_image)) {
+    if (array_key_exists('#item', $selected_image)) {
+      $image_uri = image_style_url(variable_get('related_items_by_taxonomy_image_style', 'icon'), $selected_image['#item']['uri']);
+    }
+  }
+  else {
+    // If it hasn't already been copied, copy the default blank image into
+    // the files directory with a traceable name.
+    $image_uri = 'public://' . related_items_by_taxonomy_IMAGE_FILESYSTEM_NAME;
+
+    if (!file_exists($image_uri)) {
+      $handle = fopen(drupal_get_path('module', 'related_items_by_taxonomy') . '/images/' . related_items_by_taxonomy_BLANK_IMAGE, 'r');
+      $file = file_save_data($handle, $image_uri);
+      fclose($handle);
+    }
+
+    // Create a default (blank) image.
+    $image_uri = image_style_url(variable_get('related_items_by_taxonomy_image_style', 'icon'), $image_uri);
+  }
+
+  // Now we need to try and get the summary text, if any has been set.
+  $body_text_multiple = field_get_items('node', $node, 'body');
+
+  $body_text_safe_summary_tags_stripped = '';
+  if (!empty($body_text_multiple)) {
+    if (array_key_exists('safe_summary', $body_text_multiple[0]) && !empty($body_text_multiple[0]['safe_summary'])) {
+      $body_text_safe_summary_tags_stripped = strip_tags($body_text_multiple[0]['safe_summary']);
+    }
+    else {
+      // Manually trim the body...
+      $body_text_safe_summary_tags_stripped = strip_tags($body_text_multiple[0]['safe_value']);
+
+      $body_text_safe_summary_tags_stripped = views_trim_text(array(
+        'max_length' => 120,
+        'word_boundary' => TRUE,
+        'ellipsis' => TRUE,
+        'html' => FALSE,
+      ), $body_text_safe_summary_tags_stripped);
+    }
+  }
+
+  // Work out the top section, if any.
+  $top_section = NULL;
+
+  $top_section_items = field_get_items('node', $node, 'field_top_section');
+  $top_section_value = field_view_value('node', $node, 'field_top_section', $top_section_items[0]);
+  $top_section_value = $top_section_value['#markup'];
+
+  // Finally, build the item array.
+  $related_item = array(
+    'top_section' => $top_section_value,
+    'title' => $node->title,
+    'image' => $image_uri,
+    'summary_text' => $body_text_safe_summary_tags_stripped,
+    'path' => 'node/' . $node->nid,
+  );
+
+  return $related_item;
+}
+
+/**
+ * Implements hook_menu().
+ */
+function related_items_by_taxonomy_menu() {
+  $items = array();
+
+  $items['admin/config/content/related-items-by-path'] = array(
+    'title' => 'Related Items Configuration',
+    'description' => 'Configure the Related Items listings by specifying which pages act as parents of sections of content.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('related_items_by_taxonomy_admin'),
+    'access arguments' => array('administer related items by path'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function related_items_by_taxonomy_permission() {
+  return array(
+    'administer related items' => array(
+      'title' => t('administer related items'),
+      'description' => t('Configure the Related Items by Path module.'),
+    ),
+  );
+}
+
+/**
+ * Returns a system settings form.
+ *
+ * @return mixed
+ */
+function related_items_by_taxonomy_admin() {
+  $form = array();
+
+  $form['related_items_by_taxonomy_block_title'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Title to show above any results'),
+    '#default_value' => variable_get('related_items_by_taxonomy_block_title', 'We think you\'d like...'),
+    '#description' => t('This is the heading which will be shown above any results. Leave this blank to show no title.'),
+  );
+
+  $form['related_items_by_taxonomy_image_fields'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Image fields'),
+    '#default_value' => _related_items_by_taxonomy_array_to_string(variable_get('related_items_by_taxonomy_image_fields', array('field_header_image'))),
+    '#size' => 20,
+    '#description' => t('Enter the machine names of the fields which should be checked for images, with the highest-priority image first. If the content type doesn\'t include that image field, the field will be skipped.'),
+    '#required' => TRUE,
+  );
+
+  // Get a list of available image styles.
+  $image_style_options = array();
+
+  foreach (image_styles() as $image_style) {
+    $image_style_options[$image_style['name']] = $image_style['label'] . ' (' . $image_style['name'] . ')';
+  }
+
+  $form['related_items_by_taxonomy_image_style'] = array(
+    '#type' => 'select',
+    '#title' => t('What image style should be used to display the image?'),
+    '#default_value' => variable_get('related_items_by_taxonomy_image_style', 'icon'),
+    '#options' => $image_style_options,
+    '#description' => t('Select which image style should be used to display the image. Be careful not to use a style which will output very large images, as this will heavily impact the site speed for customers.'),
+    '#required' => TRUE,
+  );
+
+  $form['related_items_by_taxonomy_items_per_block'] = array(
+    '#type' => 'select',
+    '#title' => t('How many related items should be shown?'),
+    '#default_value' => variable_get('related_items_by_taxonomy_items_per_block', 4),
+    '#options' => drupal_map_assoc(range(1, 10)),
+    '#required' => TRUE,
+  );
+
+  $form['related_items_by_taxonomy_cache'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Cache related items results?'),
+    '#description' => t('Calculating related items takes a lot of server processing power, so once results for a particular page have been calculated, they can be remembered for between 15 minutes and one month. When a page is updated, the cached results are re-calculated and saved on the next page load.'),
+    '#default_value' => variable_get('related_items_by_taxonomy_cache', TRUE),
+  );
+
+  $form['related_items_by_taxonomy_cache_time'] = array(
+    '#type' => 'select',
+    '#title' => t('How long should each page\'s results be kept before being recalculated?'),
+    '#default_value' => variable_get('related_items_by_taxonomy_cache_time', related_items_by_taxonomy_CACHE_TIME_DEFAULT),
+    '#options' => array(
+      1 * 60 * 15 => t('15 minutes'),
+      1 * 60 * 30 => t('30 minutes'),
+      1 * 60 * 60 => t('One hour'),
+      1 * 60 * 60 * 2 => t('Two hours'),
+      1 * 60 * 60 * 6 => t('Six hours'),
+      1 * 60 * 60 * 12 => t('Twelve hours'),
+      1 * 60 * 60 * 24 => t('One day'),
+      1 * 60 * 60 * 24 * 7 => t('One week'),
+      1 * 60 * 60 * 24 * 28 => t('Now you\'re just being silly...'),
+    ),
+    '#required' => TRUE,
+    '#description' => t('To keep the website performing quickly, the related content for each page is only calculated once in a while; you can define the interval here. We recommend a value between 15 minutes and one hour.'),
+  );
+
+  $form['related_items_by_taxonomy_node_types'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Show related items on which types of page?'),
+    '#description' => t('Not all pages should display lists of related content. This list will generally be the same as the list of node types shown in the related items view which provides automatically-generated related nodes when manually-selected nodes aren\'t available.'),
+    '#default_value' => related_items_by_taxonomy_node_types(),
+    '#options' => related_items_by_taxonomy_node_types_available(),
+  );
+
+  $form['#validate'][] = 'related_items_by_taxonomy_admin_validate';
+  $form['#submit'][] = 'related_items_by_taxonomy_admin_submit';
+
+  return system_settings_form($form);
+}
+
+/**
+ * Form validation handler for the administration configuration form.
+ *
+ * @param $form
+ * @param $form_state
+ */
+function related_items_by_taxonomy_admin_validate(&$form, &$form_state) {
+}
+
+/**
+ * Submit handler for the admin configuration form. Saves the parent paths and
+ * excluded pages data.
+ *
+ * @param $form
+ * @param $form_state
+ */
+function related_items_by_taxonomy_admin_submit($form, &$form_state) {
+  // Convert the image fields textarea to an array, trimming off any shitespace
+  // in the process and replacing any instances of "\r\n" with related_items_by_taxonomy_LINE_ENDING.
+  $form_state['values']['related_items_by_taxonomy_image_fields']
+    = _related_items_by_taxonomy_string_to_array($form_state['values']['related_items_by_taxonomy_image_fields']);
+}
+
+/**
+ * Saves an updated set of paths as an array.
+ *
+ * @param $paths_array
+ */
+function _related_items_by_taxonomy_save_paths($paths_array) {
+  variable_set('related_items_by_taxonomy_parent_paths', $paths_array['parent paths']);
+  variable_set('related_items_by_taxonomy_excluded_pages', $paths_array['excluded pages']);
+}
+
+/**
+ * Little helper to normalise line endings.
+ *
+ * @param $unsanitised_string
+ *
+ * @return mixed
+ */
+function _related_items_by_taxonomy_sanitise_line_endings($unsanitised_string) {
+  $unsanitised_string = str_replace("\r", related_items_by_taxonomy_LINE_ENDING, $unsanitised_string);
+  $sanitised_string = str_replace("\n\n", related_items_by_taxonomy_LINE_ENDING, $unsanitised_string);
+
+  return $sanitised_string;
+}
+
+/**
+ * Little helper to convert a string with line endings into an array.
+ *
+ * Trims whitespace off the string before exploding, to reduce empty leading/
+ * trailing values.
+ *
+ * @param $string
+ *
+ * @return array
+ */
+function _related_items_by_taxonomy_string_to_array($string) {
+  $string = trim(_related_items_by_taxonomy_sanitise_line_endings($string));
+
+  return explode(related_items_by_taxonomy_LINE_ENDING, $string);
+}
+
+/**
+ * Little helper to convert an array into a string with line endings.
+ *
+ * @param $array
+ *
+ * @return string
+ */
+function _related_items_by_taxonomy_array_to_string($array) {
+  return implode(related_items_by_taxonomy_LINE_ENDING, $array);
+}
+
+/**
+ * Gets the configured node types, or defaults if none set.
+ *
+ * @return array An array of node types.
+ */
+function related_items_by_taxonomy_node_types() {
+  return variable_get('related_items_by_taxonomy_node_types', _related_items_by_taxonomy_default_node_types());
+}
+
+/**
+ * Get a list of available node types.
+ *
+ * @return array An array of node types.
+ */
+function related_items_by_taxonomy_node_types_available() {
+  $node_types = array();
+
+  foreach (node_type_get_types() as $node_type_id => $node_type) {
+    $node_types[$node_type_id] = $node_type->name;
+  }
+
+  return $node_types;
+}
+
+/**
+ * Defines the default node types which should show related items.
+ *
+ * @return array
+ */
+function _related_items_by_taxonomy_default_node_types() {
+  return array('article', 'page', 'case_study', 'partner', 'venue');
+}

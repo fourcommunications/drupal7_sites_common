@@ -1,0 +1,14 @@
+name = Production settings
+description = Productions settings and modules for Drupal websites.
+core = 7.x
+package = Greyhead Features
+version = 7.x-1.0-20150708
+features[ctools][] = strongarm:strongarm:1
+features[features_api][] = api:2
+features[variable][] = preprocess_css
+features[variable][] = preprocess_js
+features[variable][] = page_compression
+features[variable][] = block_cache
+features_exclude[dependencies][ctools] = ctools
+features_exclude[dependencies][strongarm] = strongarm
+project path = sites/all/modules/features

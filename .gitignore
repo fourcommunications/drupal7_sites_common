@@ -13,3 +13,4 @@ Icon
 
 # Ignore environment type flag files.
 ENVIRONMENT_TYPE*
+.idea
