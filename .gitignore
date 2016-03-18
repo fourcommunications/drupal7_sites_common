@@ -1,7 +1,4 @@
 # Ignore Mac files, especially "Icon\r" files which make the baby Jesus cry...
-# Ignore privatefiles.
-privatefiles/*
-.DS_Store
 
 # The following three lines contain special characters to tell Git to ignore the
 # Mac Icon files whose names contain a newline character (because Apple are
@@ -11,8 +8,18 @@ Icon
 
 # Do not change anything above this line after "The following lines...".
 
-# Ignore environment type flag files.
-ENVIRONMENT_TYPE*
-.idea
-*/files
+# Ignore everything, except the following:
+*
+!default
+!default/*
+default/files
 default/settings.php
+!all
+!all/*
+!.gitmodules
+!.gitignore
+!enable-development-settings.sh
+!LICENSE
+!README.md
+!sites.php
+*/.DS_Store
