@@ -24,4 +24,5 @@ default/settings.php
 !LICENSE
 !README.md
 !sites.php
+.DS_Store
 */.DS_Store
