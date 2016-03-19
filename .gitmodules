@@ -16,3 +16,6 @@
 [submodule "all/themes/greyhead_bootstrap"]
 	path = all/themes/greyhead_bootstrap
 	url = git@github.com:alexharries/greyhead_bootstrap.git
+[submodule "features"]
+	path = all/modules/features
+	url = git@github.com:alexharries/drupal7_common_features.git

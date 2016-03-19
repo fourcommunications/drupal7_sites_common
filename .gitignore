@@ -12,10 +12,12 @@ Icon
 *
 !default
 !default/*
+!default/**
 default/files
 default/settings.php
 !all
 !all/*
+!all/**
 !.gitmodules
 !.gitignore
 !enable-development-settings.sh
