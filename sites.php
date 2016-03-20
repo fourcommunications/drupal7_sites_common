@@ -147,27 +147,40 @@ if (!function_exists('greyhead_configuration_get_site_urls')) {
       return FALSE;
     }
 
+    // Create an array of filenames to check - we look for
+    // 'settings.this_site_url.info' first, and then 'settings.site_urls.info'.
+    $site_urls_files = array(
+      'settings.this_site_url.info',
+      'settings.site_urls.info',
+    );
+
     // Loop through each directory name and, if a corresponding .info file is
     // found, get the live site URL.
     foreach ($multisite_directories as $multisite_directory) {
-      if (is_readable(greyhead_configuration_get_path_to_sites_directory() . $multisite_directory . '/settings.site_urls.info')) {
-        // Get the .info file's contents.
-        $settings_site_urls_info_contents = file_get_contents(greyhead_configuration_get_path_to_sites_directory() . $multisite_directory . '/settings.site_urls.info');
+      foreach ($site_urls_files as $site_urls_file) {
+        $path_to_check = greyhead_configuration_get_path_to_sites_directory() . $multisite_directory . '/' . $site_urls_file;
 
-        // Parse the info file.
-        $settings_site_urls_info_contents_parsed = drupal_parse_info_format($settings_site_urls_info_contents);
+        // Does the file exist?
+        if (is_readable($path_to_check)) {
+          // Get the .info file's contents.
+          $settings_site_urls_info_contents = file_get_contents($path_to_check);
 
-        // Copy the URLs into the format
-        // $array[www.example.com] = multisitedirectory.
-        if (array_key_exists('SETTINGS_SITE_URLS', $settings_site_urls_info_contents_parsed) && is_array($settings_site_urls_info_contents_parsed['SETTINGS_SITE_URLS'])) {
-          foreach ($settings_site_urls_info_contents_parsed['SETTINGS_SITE_URLS'] as $http_host) {
-            if (!empty($http_host)) {
-              $sites[$http_host] = $multisite_directory;
+          // Parse the info file.
+          $settings_site_urls_info_contents_parsed = drupal_parse_info_format($settings_site_urls_info_contents);
 
-              // If the host begins www., also create a non-www version.
-              if (substr($http_host, 0, strlen('www.')) == 'www.') {
-                $http_host_no_rubberdubdub = substr($http_host, strlen('www.'));
-                $sites[$http_host_no_rubberdubdub] = $multisite_directory;
+          // Copy the URLs into the format
+          // $array[www.example.com] = multisitedirectory.
+          if (array_key_exists('SETTINGS_SITE_URLS', $settings_site_urls_info_contents_parsed)
+            && is_array($settings_site_urls_info_contents_parsed['SETTINGS_SITE_URLS'])) {
+            foreach ($settings_site_urls_info_contents_parsed['SETTINGS_SITE_URLS'] as $http_host) {
+              if (!empty($http_host)) {
+                $sites[$http_host] = $multisite_directory;
+
+                // If the host begins www., also create a non-www version.
+                if (substr($http_host, 0, strlen('www.')) == 'www.') {
+                  $http_host_no_rubberdubdub = substr($http_host, strlen('www.'));
+                  $sites[$http_host_no_rubberdubdub] = $multisite_directory;
+                }
               }
             }
           }
