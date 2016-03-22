@@ -26,3 +26,4 @@ default/settings.php
 !sites.php
 .DS_Store
 */.DS_Store
+all/modules/features
