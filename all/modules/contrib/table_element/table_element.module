@@ -275,7 +275,7 @@ function table_element_pre_render_table(array $element) {
         '#access' => TRUE,
         // If attributes for table cell is not set then initialize
         // an empty value for them.
-        '#cell' => [],
+        '#cell' => array(),
       );
 
       // Element with granted access and without "value" type could
