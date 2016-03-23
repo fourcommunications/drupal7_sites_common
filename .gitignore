@@ -27,3 +27,4 @@ default/settings.php
 .DS_Store
 */.DS_Store
 all/modules/features
+all/modules/four-features
