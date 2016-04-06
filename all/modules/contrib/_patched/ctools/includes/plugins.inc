@@ -159,10 +159,10 @@ function ctools_plugin_api_include($owner, $api, $minimum_version, $current_vers
       }
 
       if (file_exists(DRUPAL_ROOT . "/$plugin_info[path]/$file")) {
-        require_once DRUPAL_ROOT . "/$plugin_info[path]/$file";
+        include_once DRUPAL_ROOT . "/$plugin_info[path]/$file";
       }
       else if (file_exists(DRUPAL_ROOT . "/$file")) {
-        require_once DRUPAL_ROOT . "/$file";
+        include_once DRUPAL_ROOT . "/$file";
       }
       $already_done[$owner][$api][$module] = TRUE;
     }
@@ -778,7 +778,7 @@ function ctools_plugin_get_function($plugin_definition, $function_name) {
     // $plugin['file'].  Don't try to run those.
     $info = ctools_plugin_get_info($plugin_definition['plugin module'], $plugin_definition['plugin type']);
     if (empty($info['info file'])) {
-      require_once DRUPAL_ROOT . '/' . $plugin_definition['path'] . '/' . $plugin_definition['file'];
+      include_once DRUPAL_ROOT . '/' . $plugin_definition['path'] . '/' . $plugin_definition['file'];
     }
   }
 
@@ -793,7 +793,7 @@ function ctools_plugin_get_function($plugin_definition, $function_name) {
       if (isset($plugin_definition[$function_name]['path'])) {
         $file = $plugin_definition[$function_name]['path'] . '/' . $file;
       }
-      require_once DRUPAL_ROOT . '/' . $file;
+      include_once DRUPAL_ROOT . '/' . $file;
     }
   }
   else {
@@ -847,7 +847,7 @@ function ctools_plugin_get_class($plugin_definition, $class_name) {
     // $plugin['file'].  Don't try to run those.
     $info = ctools_plugin_get_info($plugin_definition['plugin module'], $plugin_definition['plugin type']);
     if (empty($info['info file'])) {
-      require_once DRUPAL_ROOT . '/' . $plugin_definition['path'] . '/' . $plugin_definition['file'];
+      include_once DRUPAL_ROOT . '/' . $plugin_definition['path'] . '/' . $plugin_definition['file'];
     }
   }
 
