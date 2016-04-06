@@ -1,0 +1,59 @@
+From 329fbce5ef20e3d9034d4cb4403563050658b3ae Mon Sep 17 00:00:00 2001
+From: Alex Harries <alex@greyhead.co.uk>
+Date: Wed, 6 Apr 2016 13:16:19 +0100
+Subject: [PATCH] Use "include_once" instead of "require_once" in ctools so it
+ doesn't cause 500 errors when moving site structure and trying to prompt a
+ system table rebuild via Drush cc all. Bloomin' ctools :(
+
+Signed-off-by: Alex Harries <alex@greyhead.co.uk>
+---
+ includes/plugins.inc | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/includes/plugins.inc b/includes/plugins.inc
+index 65f3662..497fb97 100644
+--- a/includes/plugins.inc
++++ b/includes/plugins.inc
+@@ -159,10 +159,10 @@ function ctools_plugin_api_include($owner, $api, $minimum_version, $current_vers
+       }
+
+       if (file_exists(DRUPAL_ROOT . "/$plugin_info[path]/$file")) {
+-        require_once DRUPAL_ROOT . "/$plugin_info[path]/$file";
++        include_once DRUPAL_ROOT . "/$plugin_info[path]/$file";
+       }
+       else if (file_exists(DRUPAL_ROOT . "/$file")) {
+-        require_once DRUPAL_ROOT . "/$file";
++        include_once DRUPAL_ROOT . "/$file";
+       }
+       $already_done[$owner][$api][$module] = TRUE;
+     }
+@@ -778,7 +778,7 @@ function ctools_plugin_get_function($plugin_definition, $function_name) {
+     // $plugin['file'].  Don't try to run those.
+     $info = ctools_plugin_get_info($plugin_definition['plugin module'], $plugin_definition['plugin type']);
+     if (empty($info['info file'])) {
+-      require_once DRUPAL_ROOT . '/' . $plugin_definition['path'] . '/' . $plugin_definition['file'];
++      include_once DRUPAL_ROOT . '/' . $plugin_definition['path'] . '/' . $plugin_definition['file'];
+     }
+   }
+
+@@ -793,7 +793,7 @@ function ctools_plugin_get_function($plugin_definition, $function_name) {
+       if (isset($plugin_definition[$function_name]['path'])) {
+         $file = $plugin_definition[$function_name]['path'] . '/' . $file;
+       }
+-      require_once DRUPAL_ROOT . '/' . $file;
++      include_once DRUPAL_ROOT . '/' . $file;
+     }
+   }
+   else {
+@@ -847,7 +847,7 @@ function ctools_plugin_get_class($plugin_definition, $class_name) {
+     // $plugin['file'].  Don't try to run those.
+     $info = ctools_plugin_get_info($plugin_definition['plugin module'], $plugin_definition['plugin type']);
+     if (empty($info['info file'])) {
+-      require_once DRUPAL_ROOT . '/' . $plugin_definition['path'] . '/' . $plugin_definition['file'];
++      include_once DRUPAL_ROOT . '/' . $plugin_definition['path'] . '/' . $plugin_definition['file'];
+     }
+   }
+
+--
+2.6.4 (Apple Git-63)
+
