@@ -297,8 +297,11 @@ class views_data_export_plugin_display_export extends views_plugin_display_feed 
     $this->initialize_index();
     //$this->batched_execution_state->fid = $this->outputfile_create();
 
-    // Initialize the progress counter
-    $this->batched_execution_state->sandbox['max'] = db_query('SELECT COUNT(*) FROM {' . $this->index_tablename() . '}')->fetchField();
+    // Initialize the progress counter.
+    if (db_table_exists($this->index_tablename())) {
+      $this->batched_execution_state->sandbox['max'] = db_query('SELECT COUNT(*) FROM {' . $this->index_tablename() . '}')->fetchField();
+    }
+
     // Record the time we started.
     list($usec, $sec) = explode(' ', microtime());
     $this->batched_execution_state->sandbox['started'] = (float) $usec + (float) $sec;
@@ -306,15 +309,17 @@ class views_data_export_plugin_display_export extends views_plugin_display_feed 
     // Build up our querystring for the final page callback.
     $querystring = array(
       'eid' => $this->batched_execution_state->eid,
+      'return-url' => NULL,
     );
-    // If we were attached to another view, grab that for the final URL.
-    if (!empty($_GET['attach']) && isset($this->view->display[$_GET['attach']])) {
+
+    // If we have a configured return path, use that.
+    if ($this->get_option('return_path')) {
+      $querystring['return-url'] = $this->get_option('return_path');
+    }
+    // Else if we were attached to another view, grab that for the final URL.
+    else if (!empty($_GET['attach']) && isset($this->view->display[$_GET['attach']])) {
       // Get the path of the attached display:
       $querystring['return-url'] = $this->view->get_url(NULL, $this->view->display[$_GET['attach']]->handler->get_path());
-    }
-    else {
-      $return_path = $this->get_option('return_path');
-      $querystring['return-url'] = isset($return_path) ? $return_path : NULL;
     }
 
     //Set the batch off
