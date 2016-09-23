@@ -29,3 +29,5 @@ default/settings.php
 all/modules/features
 all/modules/four-features
 all/drush
+
+files/
