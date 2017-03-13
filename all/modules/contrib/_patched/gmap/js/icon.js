@@ -91,7 +91,9 @@ Drupal.gmap.getIcon = function (setname, sequence) {
 };
 
 Drupal.gmap.getShadow = function (setname, sequence) {
-    if (this.gshadows) return this.gshadows[setname][sequence % this.gicons[setname].length];
+    if (this.gshadows && this.gicons[setname]) {
+		return this.gshadows[setname][sequence % this.gicons[setname].length];
+	}
 };
 
 /**

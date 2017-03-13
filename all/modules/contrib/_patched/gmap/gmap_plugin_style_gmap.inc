@@ -197,7 +197,8 @@ class gmap_plugin_style_gmap extends views_plugin_style {
 
       foreach ($records as $row_index => $row) {
         $this->view->row_index = $row_index;
-
+		$markerZindex = 1;
+		
         if ($this->options['datasource'] == 'location') {
           $lat = (float) $row->{$lat_field};
           $lon = (float) $row->{$lon_field};
@@ -246,6 +247,14 @@ class gmap_plugin_style_gmap extends views_plugin_style {
           elseif ($this->options['markers'] == 'taxonomy') {
             if (!empty($row->gmap_node_marker)) {
               $markername = $row->gmap_node_marker;
+			  if($markername === 'blue') {
+				  if(isset($row->_field_data['nid']['entity']->field__amenity_type['und'][0]['tid'])) {
+					  $term = taxonomy_term_load($row->_field_data['nid']['entity']->field__amenity_type['und'][0]['tid']);
+					  if(isset($term->field_gmapindex['und'][0]['value'])) {
+						$markerZindex = $term->field_gmapindex['und'][0]['value'];
+					  }
+				  }
+			  }
             }
           }
           elseif ($this->options['markers'] == 'userrole') {
@@ -291,6 +300,7 @@ class gmap_plugin_style_gmap extends views_plugin_style {
               'highlight' => (!empty($highlight_nid) && !empty($row_nid) && $highlight_nid == $row_nid) ? 1 : 0,
               'highlightcolor' => $this->options['highlight_nodearg_color'],
               'animation' => $this->options['animation'],
+			  'zIndex' => (int)$markerZindex
             ),
           );
 
